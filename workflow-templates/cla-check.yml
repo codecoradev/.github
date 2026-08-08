@@ -1,0 +1,65 @@
+name: CLA Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+  contents: read
+  statuses: write
+
+jobs:
+  cla-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download CLA signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Try to fetch signatures from the default branch
+          gh api \
+            repos/${{ github.repository_owner }}/${{ github.event.repository.name }}/contents/.cla/signatures.json \
+            --jq '.content' 2>/dev/null | base64 -d > signatures.json || \
+            echo '{"signatures":[]}' > signatures.json
+
+      - name: Run CLA check
+        id: cla
+        run: python3 ${{ github.workspace }}/../repo/.github/scripts/cla-check.py || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
+          SIGNATURES_FILE: signatures.json
+          EVENT_NAME: ${{ github.event_name }}
+
+      - name: Set commit status
+        if: always()
+        run: |
+          if [ "${{ steps.cla.outputs.signed }}" = "true" ]; then
+            gh api repos/$REPOSITORY/statuses/$SHA \
+              -f state="success" \
+              -f context="CLA Check" \
+              -f description="✅ CLA signed by $ACTOR"
+          else
+            gh api repos/$REPOSITORY/statuses/$SHA \
+              -f state="failure" \
+              -f context="CLA Check" \
+              -f description="❌ CLA not signed. Please sign at https://codecoradev.github.io/cla"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
