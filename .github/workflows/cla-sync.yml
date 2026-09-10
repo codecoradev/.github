@@ -31,100 +31,100 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # NOTE: step state is passed via /tmp/cla-state.env (persists across
+      # steps on the same runner) — NOT via step outputs, which silently
+      # failed to propagate on this workflow (live-tested 2026-09-10).
+
       - name: Validate & apply signature
-        id: apply
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const issue = context.payload.issue;
             const author = issue.user.login;
             const body = issue.body || '';
-            const out = (k, v) => {
-              core.setOutput(k, v);
-              // Redundant direct write — belt & braces for output propagation.
-              try { require('fs').appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`); }
-              catch (e) { console.error(`GITHUB_OUTPUT append failed for ${k}: ${e}`); }
-            };
-            console.log(`issue #${issue.number} by @${author}, body length ${body.length}`);
+            console.log(`issue #${'$'}{issue.number} by @${'$'}{author}, body length ${'$'}{body.length}`);
 
-            // 1. Parse fields from the portal-generated issue body.
-            const field = (label) => {
-              const m = body.match(new RegExp(`- \\*\\*${label}:\\*\\* (.+)`));
-              return m ? m[1].trim() : null;
-            };
-            const name = field('Name');
-            const claimedUser = (field('GitHub') || '').replace(/^@/, '');
-            const claType = field('CLA Type');
-            const signature = field('Signature');
-            console.log(`parsed: name=${JSON.stringify(name)} claimed=${JSON.stringify(claimedUser)} type=${JSON.stringify(claType)} sig=${JSON.stringify(signature)}`);
+            let result = 'error', reason = 'unhandled', username = author;
+            try {
+              const field = (label) => {
+                const m = body.match(new RegExp(`- \\*\\*${'$'}{label}:\\*\\* (.+)`));
+                return m ? m[1].trim() : null;
+              };
+              const name = field('Name');
+              const claimedUser = (field('GitHub') || '').replace(/^@/, '');
+              const claType = field('CLA Type');
+              const signature = field('Signature');
+              console.log(`parsed: name=${'$'}{JSON.stringify(name)} claimed=${'$'}{JSON.stringify(claimedUser)} type=${'$'}{JSON.stringify(claType)} sig=${'$'}{JSON.stringify(signature)}`);
 
-            if (!name || !claimedUser || !claType || !signature) {
-              out('result', 'invalid');
-              out('reason', 'Missing required fields (Name / GitHub / CLA Type / Signature).');
-              return;
+              if (!name || !claimedUser || !claType || !signature) {
+                result = 'invalid';
+                reason = 'Missing required fields (Name / GitHub / CLA Type / Signature).';
+              } else if (author.toLowerCase() !== claimedUser.toLowerCase()) {
+                // Identity binding: the issue opener must be the claimed user
+                // (portal fills the username via OAuth — this guards against
+                // hand-crafted issues signing for someone else).
+                result = 'rejected';
+                reason = `Issue opened by @${'$'}{author} but claims signature for @${'$'}{claimedUser}.`;
+              } else if (!['individual', 'corporate'].includes(claType)) {
+                result = 'invalid';
+                reason = `Unknown CLA type: ${'$'}{claType}`;
+              } else {
+                // Merge into signatures.json (idempotent per username).
+                const path = '.cla/signatures.json';
+                const db = JSON.parse(fs.readFileSync(path, 'utf8'));
+                db.signatures = (db.signatures || []).filter(
+                  (s) => s.github_username.toLowerCase() !== author.toLowerCase()
+                );
+                db.signatures.push({
+                  name,
+                  github_username: author,
+                  signed_at: new Date().toISOString(),
+                  cla_type: claType,
+                  commit_sha: context.sha.slice(0, 7),
+                  signature,
+                });
+                fs.writeFileSync(path, JSON.stringify(db, null, 2) + '\n');
+                result = 'ok';
+                reason = 'signature applied';
+              }
+            } catch (e) {
+              result = 'error';
+              reason = `exception: ${'$'}{e}`;
+              console.error(e);
             }
 
-            // 2. Identity binding: the issue opener must be the claimed user.
-            //    (Portal fills the username via OAuth — this guards against
-            //    hand-crafted issues signing for someone else.)
-            if (author.toLowerCase() !== claimedUser.toLowerCase()) {
-              out('result', 'rejected');
-              out('reason', `Issue opened by @${author} but claims signature for @${claimedUser}.`);
-              return;
-            }
-
-            // 3. Known CLA types only.
-            if (!['individual', 'corporate'].includes(claType)) {
-              out('result', 'invalid');
-              out('reason', `Unknown CLA type: ${claType}`);
-              return;
-            }
-
-            // 4. Merge into signatures.json (idempotent per username).
-            const fs = require('fs');
-            const path = '.cla/signatures.json';
-            const db = JSON.parse(fs.readFileSync(path, 'utf8'));
-            db.signatures = (db.signatures || []).filter(
-              (s) => s.github_username.toLowerCase() !== author.toLowerCase()
-            );
-            db.signatures.push({
-              name,
-              github_username: author,
-              signed_at: new Date().toISOString(),
-              cla_type: claType,
-              commit_sha: context.sha.slice(0, 7),
-              signature,
-            });
-
-            fs.writeFileSync(path, JSON.stringify(db, null, 2) + '\n');
-            out('result', 'ok');
-            out('username', author);
+            fs.writeFileSync('/tmp/cla-state.env',
+              `RESULT=${'$'}{result}\nREASON=${'$'}{reason.replace(/\n/g, ' ')}\nUSERNAME=${'$'}{username}\nPR_URL=\n`);
+            console.log(`state: result=${'$'}{result} reason=${'$'}{reason}`);
 
       - name: Label issue (server-side)
-        if: steps.apply.outputs.result == 'ok'
-        run: gh issue edit ${{ github.event.issue.number }} --add-label cla-signature --repo codecoradev/.github
+        run: |
+          source /tmp/cla-state.env
+          if [ "$RESULT" != "ok" ]; then echo "skip: RESULT=$RESULT"; exit 0; fi
+          gh issue edit ${{ github.event.issue.number }} --add-label cla-signature --repo codecoradev/.github
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OWNER_PAT }}
 
       - name: Create signature PR
-        if: steps.apply.outputs.result == 'ok'
-        id: pr
         run: |
-          BRANCH="cla/signature-${{ steps.apply.outputs.username }}"
+          source /tmp/cla-state.env
+          if [ "$RESULT" != "ok" ]; then echo "skip: RESULT=$RESULT"; exit 0; fi
+          BRANCH="cla/signature-$USERNAME"
           git config user.name "cla-sync[bot]"
           git config user.email "cla-sync[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add .cla/signatures.json
-          git commit -m "cla: add signature for @${{ steps.apply.outputs.username }} (issue #${{ github.event.issue.number }})"
+          git commit -m "cla: add signature for @$USERNAME (issue #${{ github.event.issue.number }})"
           # Org caps GITHUB_TOKEN at read — push with the PAT explicitly.
           git push "https://x-access-token:${GH_TOKEN}@github.com/codecoradev/.github.git" "$BRANCH"
           PR_URL=$(gh pr create \
             --repo codecoradev/.github \
             --head "$BRANCH" \
             --base main \
-            --title "cla: add signature for @${{ steps.apply.outputs.username }}" \
+            --title "cla: add signature for @$USERNAME" \
             --body "## What
-          - Adds CLA signature for @${{ steps.apply.outputs.username }} to \`.cla/signatures.json\`
+          - Adds CLA signature for @$USERNAME to \`.cla/signatures.json\`
           - Source: signing portal issue #${{ github.event.issue.number }} (identity verified: issue opener == claimed GitHub user)
 
           ## Why
@@ -132,32 +132,32 @@ jobs:
 
           ## Testing
           - \`cla-sync\` validation passed (fields parsed, identity match, CLA type known)
-          - Owner merges this PR to complete the CLA flow")
-          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          - Owner merges this PR to complete the CLA flow") || PR_URL=""
+          # Persist PR_URL for the comment/close steps.
+          sed -i "s|^PR_URL=.*|PR_URL=${PR_URL}|" /tmp/cla-state.env
+          echo "pr_url=$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.OWNER_PAT }}
 
       - name: Comment result on issue
-        if: always()
         uses: actions/github-script@v7
-        env:
-          SYNC_RESULT: ${{ steps.apply.outputs.result }}
-          SYNC_REASON: ${{ steps.apply.outputs.reason }}
-          SYNC_PR_URL: ${{ steps.pr.outputs.pr_url }}
         with:
           script: |
-            // Read via env vars — issue-derived values are attacker-
-            // values are attacker-controlled and must not enter the script
-            // source (GitHub Actions script injection).
-            const result = process.env.SYNC_RESULT;
-            const prUrl = process.env.SYNC_PR_URL;
-            const reason = process.env.SYNC_REASON || 'unknown error';
-            if (result === 'ok' && prUrl) {
-              msg = `✅ Signature validated and recorded.\n\n📎 Review & merge: ${prUrl}\nOnce merged, the \`cla-check\` workflow will pass for your PRs. No further action needed.`;
-            } else if (result === 'ok') {
+            const fs = require('fs');
+            const state = Object.fromEntries(
+              fs.readFileSync('/tmp/cla-state.env', 'utf8').trim().split('\n').map((l) => {
+                const i = l.indexOf('=');
+                return [l.slice(0, i), l.slice(i + 1)];
+              })
+            );
+            console.log(`state file: ${'$'}{JSON.stringify(state)}`);
+            let msg;
+            if (state.RESULT === 'ok' && state.PR_URL) {
+              msg = `✅ Signature validated and recorded.\n\n📎 Review & merge: ${'$'}{state.PR_URL}\nOnce merged, the \`cla-check\` workflow will pass for your PRs. No further action needed.`;
+            } else if (state.RESULT === 'ok') {
               msg = `✅ Signature validated, but the automated PR could not be created — a signature PR for your account is probably already pending. A maintainer will finalize it shortly.`;
             } else {
-              msg = `⚠️ Could not process this signature automatically: ${reason}\n\nPlease re-submit via https://codecoradev.github.io/cla/ (make sure you sign in with GitHub first), or contact a maintainer.`;
+              msg = `⚠️ Could not process this signature automatically: ${'$'}{state.REASON}\n\nPlease re-submit via https://codecoradev.github.io/cla/ (make sure you sign in with GitHub first), or contact a maintainer.`;
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -167,7 +167,12 @@ jobs:
             });
 
       - name: Close processed issue
-        if: steps.apply.outputs.result == 'ok' && steps.pr.outputs.pr_url != ''
-        run: gh issue close ${{ github.event.issue.number }} --repo codecoradev/.github --reason completed
+        run: |
+          source /tmp/cla-state.env
+          if [ "$RESULT" = "ok" ] && [ -n "$PR_URL" ]; then
+            gh issue close ${{ github.event.issue.number }} --repo codecoradev/.github --reason completed
+          else
+            echo "skip: RESULT=$RESULT PR_URL=$PR_URL"
+          fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OWNER_PAT }}
