@@ -132,17 +132,24 @@ jobs:
       - name: Comment result on issue
         if: always()
         uses: actions/github-script@v7
+        env:
+          SYNC_RESULT: ${{ steps.apply.outputs.result }}
+          SYNC_REASON: ${{ steps.apply.outputs.reason }}
+          SYNC_PR_URL: ${{ steps.pr.outputs.pr_url }}
         with:
           script: |
-            const result = '${{ steps.apply.outputs.result }}';
-            const prUrl = '${{ steps.pr.outputs.pr_url }}';
-            let msg;
+            // Read via env, never via ${{ }} interpolation — issue-derived
+            // values are attacker-controlled and must not enter the script
+            // source (GitHub Actions script injection).
+            const result = process.env.SYNC_RESULT;
+            const prUrl = process.env.SYNC_PR_URL;
+            const reason = process.env.SYNC_REASON || 'unknown error';
             if (result === 'ok' && prUrl) {
               msg = `✅ Signature validated and recorded.\n\n📎 Review & merge: ${prUrl}\nOnce merged, the \`cla-check\` workflow will pass for your PRs. No further action needed.`;
             } else if (result === 'ok') {
               msg = `✅ Signature validated, but the automated PR could not be created — a signature PR for your account is probably already pending. A maintainer will finalize it shortly.`;
             } else {
-              msg = `⚠️ Could not process this signature automatically: ${{ steps.apply.outputs.reason }}\n\nPlease re-submit via https://codecoradev.github.io/cla/ (make sure you sign in with GitHub first), or contact a maintainer.`;
+              msg = `⚠️ Could not process this signature automatically: ${reason}\n\nPlease re-submit via https://codecoradev.github.io/cla/ (make sure you sign in with GitHub first), or contact a maintainer.`;
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -152,7 +159,7 @@ jobs:
             });
 
       - name: Close processed issue
-        if: steps.apply.outputs.result == 'ok'
+        if: steps.apply.outputs.result == 'ok' && steps.pr.outputs.pr_url != ''
         run: gh issue close ${{ github.event.issue.number }} --repo codecoradev/.github --reason completed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
