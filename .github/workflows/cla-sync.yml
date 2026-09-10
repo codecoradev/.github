@@ -39,6 +39,13 @@ jobs:
             const issue = context.payload.issue;
             const author = issue.user.login;
             const body = issue.body || '';
+            const out = (k, v) => {
+              core.setOutput(k, v);
+              // Redundant direct write — belt & braces for output propagation.
+              try { require('fs').appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`); }
+              catch (e) { console.error(`GITHUB_OUTPUT append failed for ${k}: ${e}`); }
+            };
+            console.log(`issue #${issue.number} by @${author}, body length ${body.length}`);
 
             // 1. Parse fields from the portal-generated issue body.
             const field = (label) => {
@@ -49,10 +56,11 @@ jobs:
             const claimedUser = (field('GitHub') || '').replace(/^@/, '');
             const claType = field('CLA Type');
             const signature = field('Signature');
+            console.log(`parsed: name=${JSON.stringify(name)} claimed=${JSON.stringify(claimedUser)} type=${JSON.stringify(claType)} sig=${JSON.stringify(signature)}`);
 
             if (!name || !claimedUser || !claType || !signature) {
-              core.setOutput('result', 'invalid');
-              core.setOutput('reason', 'Missing required fields (Name / GitHub / CLA Type / Signature).');
+              out('result', 'invalid');
+              out('reason', 'Missing required fields (Name / GitHub / CLA Type / Signature).');
               return;
             }
 
@@ -60,15 +68,15 @@ jobs:
             //    (Portal fills the username via OAuth — this guards against
             //    hand-crafted issues signing for someone else.)
             if (author.toLowerCase() !== claimedUser.toLowerCase()) {
-              core.setOutput('result', 'rejected');
-              core.setOutput('reason', `Issue opened by @${author} but claims signature for @${claimedUser}.`);
+              out('result', 'rejected');
+              out('reason', `Issue opened by @${author} but claims signature for @${claimedUser}.`);
               return;
             }
 
             // 3. Known CLA types only.
             if (!['individual', 'corporate'].includes(claType)) {
-              core.setOutput('result', 'invalid');
-              core.setOutput('reason', `Unknown CLA type: ${claType}`);
+              out('result', 'invalid');
+              out('reason', `Unknown CLA type: ${claType}`);
               return;
             }
 
@@ -89,8 +97,8 @@ jobs:
             });
 
             fs.writeFileSync(path, JSON.stringify(db, null, 2) + '\n');
-            core.setOutput('result', 'ok');
-            core.setOutput('username', author);
+            out('result', 'ok');
+            out('username', author);
 
       - name: Label issue (server-side)
         if: steps.apply.outputs.result == 'ok'
