@@ -63,6 +63,8 @@ jobs:
                   '- 📋 **Individual?** → [Sign CLA Individual](https://codecoradev.github.io/cla/?type=individual)',
                   '- 🏢 **Corporate?** → [Sign CLA Corporate](https://codecoradev.github.io/cla/?type=corporate)',
                   '',
+                  'After submitting, wait for the green **✅ CLA submitted** confirmation — that means your signature went through. It is recorded automatically and this check will pass within a few minutes.',
+                  '',
                   '---',
                   '<sub>By signing, you agree to the terms in [CLA_INDIVIDUAL.md](https://github.com/codecoradev/.github/blob/main/CLA_INDIVIDUAL.md) or [CLA_CORPORATE.md](https://github.com/codecoradev/.github/blob/main/CLA_CORPORATE.md).</sub>',
                 ].join('\n');
