@@ -120,21 +120,39 @@ jobs:
         run: |
           U=$(grep '^USERNAME=' /tmp/cla-state.env | cut -d= -f2-)
           BRANCH="cla/signature-$U"
+          ISSUE=${{ github.event.issue.number }}
+          # Preserve the freshly-written signatures.json before any branch dance.
+          cp .cla/signatures.json /tmp/new-signatures.json
           git config user.name "cla-sync[bot]"
           git config user.email "cla-sync[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git add .cla/signatures.json
-          git commit -m "cla: add signature for @$U (issue #${{ github.event.issue.number }})"
-          # Org caps GITHUB_TOKEN at read — push with the PAT explicitly.
-          git push "https://x-access-token:${GH_TOKEN}@github.com/codecoradev/.github.git" "$BRANCH"
-          PR_URL=$(gh pr create \
-            --repo codecoradev/.github \
-            --head "$BRANCH" \
-            --base main \
-            --title "cla: add signature for @$U" \
-            --body "## What
+          EXISTING=$(gh pr list --repo codecoradev/.github --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            # Resubmission: a signature PR for this user is already open.
+            # Refresh the branch so the open PR reflects the latest submission.
+            git fetch origin "$BRANCH" --quiet
+            git checkout -f -B "$BRANCH" "origin/$BRANCH" --quiet
+            cp /tmp/new-signatures.json .cla/signatures.json
+            git add .cla/signatures.json
+            git commit -m "cla: refresh signature for @$U (issue #$ISSUE)" || echo "no content change"
+            # Our own bot branch — force push is safe and keeps the open PR updated.
+            git push --force "https://x-access-token:${GH_TOKEN}@github.com/codecoradev/.github.git" "$BRANCH" --quiet
+            PR_URL="https://github.com/codecoradev/.github/pull/$EXISTING"
+            echo "refreshed existing PR #$EXISTING"
+          else
+            git checkout -B "$BRANCH"
+            cp /tmp/new-signatures.json .cla/signatures.json
+            git add .cla/signatures.json
+            git commit -m "cla: add signature for @$U (issue #$ISSUE)"
+            # Org caps GITHUB_TOKEN at read — push with the PAT explicitly.
+            git push "https://x-access-token:${GH_TOKEN}@github.com/codecoradev/.github.git" "$BRANCH" --quiet
+            PR_URL=$(gh pr create \
+              --repo codecoradev/.github \
+              --head "$BRANCH" \
+              --base main \
+              --title "cla: add signature for @$U" \
+              --body "## What
           - Adds CLA signature for @$U to \`.cla/signatures.json\`
-          - Source: signing portal issue #${{ github.event.issue.number }} (identity verified: issue opener == claimed GitHub user)
+          - Source: signing portal issue #$ISSUE (identity verified: issue opener == claimed GitHub user)
 
           ## Why
           - Automates the manual signature-recording step; the \`cla-check\` workflow in product repos reads this file.
@@ -142,6 +160,7 @@ jobs:
           ## Testing
           - \`cla-sync\` validation passed (fields parsed, identity match, CLA type known)
           - Owner merges this PR to complete the CLA flow") || PR_URL=""
+          fi
           # Persist PR_URL for the comment/close steps.
           sed -i "s|^PR_URL=.*|PR_URL=${PR_URL}|" /tmp/cla-state.env
           echo "pr_url=$PR_URL" >> "$GITHUB_ENV"
@@ -150,6 +169,7 @@ jobs:
           GH_TOKEN: ${{ secrets.OWNER_PAT }}
 
       - name: Comment result on issue
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
