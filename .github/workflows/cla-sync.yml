@@ -138,7 +138,7 @@ jobs:
           SYNC_PR_URL: ${{ steps.pr.outputs.pr_url }}
         with:
           script: |
-            // Read via env, never via ${{ }} interpolation — issue-derived
+            // Read via env vars — issue-derived values are attacker-
             // values are attacker-controlled and must not enter the script
             // source (GitHub Actions script injection).
             const result = process.env.SYNC_RESULT;
