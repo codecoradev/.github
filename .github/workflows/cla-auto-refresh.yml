@@ -1,0 +1,31 @@
+name: CLA Auto-refresh
+
+# Re-runs failing cla-check jobs for PRs whose author has SINCE signed the
+# CLA, so a late signature turns the check green without manual intervention.
+# Fires right after a signature lands (CLA Sync success) and hourly as a net.
+# OWNER_PAT is required: the reruns target workflow runs in OTHER repos.
+
+on:
+  workflow_run:
+    workflows: ["CLA Sync"]
+    types: [completed]
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (for the refresh script)
+        uses: actions/checkout@v4
+
+      - name: Re-run failing cla-checks for now-signed authors
+        env:
+          GH_TOKEN: ${{ secrets.OWNER_PAT }}
+          ORG: codecoradev
+        run: python3 .cla/scripts/cla_autorefresh.py
