@@ -11,6 +11,14 @@ import os
 import subprocess
 
 ORG = os.environ.get("ORG", "codecoradev")
+# Repos carrying cla-check.yml. OWNER_PAT is a fine-grained token without
+# org-wide repo listing permission, so /orgs/{org}/repos returns nothing —
+# list the fleet explicitly (override with REPOS="a,b,c").
+DEFAULT_REPOS = [
+    "uteke", "titen", "cosy", "cora-code", "trapfall",
+    "corin", "skill-suites", "codecoradev.github.io", "rungu", "drawover",
+]
+REPOS = [r for r in os.environ.get("REPOS", ",".join(DEFAULT_REPOS)).split(",") if r]
 DRY = os.environ.get("DRY_RUN", "") == "1"
 MIN_AGE = datetime.timedelta(minutes=20)  # rerun-spam guard
 
@@ -34,11 +42,8 @@ def signed_usernames():
 def main():
     signed = signed_usernames()
     print(f"signed users: {len(signed)}")
-    repos = api(f"/orgs/{ORG}/repos", per_page=100)
-    for repo in repos:
-        name = repo["name"]
-        if name == ".github":
-            continue
+    print(f"scanning repos: {len(REPOS)}")
+    for name in REPOS:
         try:
             prs = api(f"/repos/{ORG}/{name}/pulls", state="open", per_page=100)
         except RuntimeError as e:
