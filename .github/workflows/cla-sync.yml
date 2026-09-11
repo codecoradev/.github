@@ -183,7 +183,7 @@ jobs:
             console.log('state file: ' + JSON.stringify(state));
             let msg;
             if (state.RESULT === 'ok' && state.PR_URL) {
-              msg = '✅ Signature validated and recorded.\n\n📎 Review & merge: ' + state.PR_URL + '\nOnce merged, the `cla-check` workflow will pass for your PRs. No further action needed.';
+              msg = '✅ Signature validated and recorded.\n\n📎 Review & merge: ' + state.PR_URL + '\nOnce the signature PR is merged, failing `cla-check` runs on your PRs are re-run automatically (usually within the hour). If a check stays red, just re-run it or ping a maintainer.';
             } else if (state.RESULT === 'ok') {
               msg = '✅ Signature validated, but the automated PR could not be created — a signature PR for your account is probably already pending. A maintainer will finalize it shortly.';
             } else {
