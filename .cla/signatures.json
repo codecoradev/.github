@@ -10,6 +10,14 @@
       "cla_type": "individual",
       "commit_sha": "c8dec32",
       "signature": "Anaz Satria Aji"
+    },
+    {
+      "name": "Abdul Aziz M",
+      "github_username": "KazamiHazaki",
+      "signed_at": "2026-09-10T15:59:05.598Z",
+      "cla_type": "individual",
+      "commit_sha": "55ed256",
+      "signature": "Abdul Aziz M"
     }
   ]
 }
